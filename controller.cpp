@@ -3,6 +3,8 @@
 #include <string>
 #include <cmath>
 
+using namespace std;
+
 struct StateDerivative
 {
 	double cart_position_rate;
@@ -18,6 +20,8 @@ struct State
 	double angle;
 	double angular_velocity;
 };
+
+string filename{"data.csv"};
 
 double pole_length = 1;
 double pole_mass = 1;
@@ -60,7 +64,7 @@ State add_scaled_state(State state, StateDerivative derivative, double scale)
 	return s;
 }
 
-State euler(int force, State state)
+State euler(double force, State state)
 {
 	StateDerivative derivatives = dynamics(force, state);
 	return State{
@@ -71,7 +75,7 @@ State euler(int force, State state)
 	};
 }
 
-State rk4(int force, State state)
+State rk4(double force, State state)
 {
 	StateDerivative k1 = dynamics(force, state);
 
@@ -112,13 +116,25 @@ double PD_Controller(State input)
 	previous_error = error;
 	return force;
 }
-std::string filename{"data.csv"};
 
-int main()
+int main(int argc, char *argv[])
 {
-	std::ofstream ofs;
-	ofs.open(filename, std::ofstream::app);
+	int run_seconds = 60;
+	if (argc == 1)
+	{
+		cout << "No argument given, default running 60seconds" << endl;
+	}
+	else
+	{
+		run_seconds = stoi(argv[1]);
+		cout << "Running sim for " + to_string(run_seconds) + " seconds" << endl;
+	}
+	int sim_steps = run_seconds / dt;
+
+	ofstream ofs;
+	ofs.open(filename, ofstream::app);
 	ofs << "time,cart_pos,pole_angle\n";
+
 	State state{
 		.cart_position = 0,
 		.cart_velocity = 0,
@@ -126,15 +142,15 @@ int main()
 		.angular_velocity = 0,
 	};
 
-	int force = 0;
+	double force = 0;
 	double time = 0;
 
-	for (int i = 0; i < 5000; i++)
+	for (int i = 0; i <= sim_steps; i++)
 	{
 		state = rk4(force, state);
 		force = PD_Controller(state);
 		time += dt;
-		std::string csv_string = std::to_string(time) + "," + std::to_string(state.cart_position) + "," + std::to_string(state.angle) + "\n";
+		string csv_string = to_string(time) + "," + to_string(state.cart_position) + "," + to_string(state.angle) + "\n";
 		ofs << csv_string;
 	}
 	ofs.close();
