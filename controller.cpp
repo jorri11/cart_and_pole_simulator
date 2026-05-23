@@ -53,61 +53,93 @@ StateDerivative dynamics(double force, State state)
 		.angular_velocity_rate = angle_acceleration};
 }
 
-State add_scaled_state(State state, StateDerivative derivative, double scale)
+class DifferentialEquationSolver
 {
-	State s{
-		.cart_position = state.cart_position + derivative.cart_position_rate * scale,
-		.cart_velocity = state.cart_velocity + derivative.cart_velocity_rate * scale,
-		.angle = state.angle + derivative.angle_rate * scale,
-		.angular_velocity = state.angular_velocity + derivative.angular_velocity_rate * scale,
+	double dt;
+	virtual State solve(double force, State current_state) = 0;
+};
+
+class Euler : public DifferentialEquationSolver
+{
+private:
+	double dt;
+
+public:
+	Euler(double timestep)
+	{
+		dt = timestep;
 	};
-	return s;
-}
 
-State euler(double force, State state)
+	State solve(double force, State current_state) override
+	{
+		StateDerivative derivatives = dynamics(force, current_state);
+		return State{
+			.cart_position = derivatives.cart_position_rate * dt,
+			.cart_velocity = derivatives.cart_velocity_rate * dt,
+			.angle = derivatives.angle_rate * dt,
+			.angular_velocity = derivatives.angular_velocity_rate * dt,
+		};
+	}
+};
+class Rk4 : public DifferentialEquationSolver
 {
-	StateDerivative derivatives = dynamics(force, state);
-	return State{
-		.cart_position = derivatives.cart_position_rate * dt,
-		.cart_velocity = derivatives.cart_velocity_rate * dt,
-		.angle = derivatives.angle_rate * dt,
-		.angular_velocity = derivatives.angular_velocity_rate * dt,
-	};
-}
+private:
+	double dt;
+	State add_scaled_state(State state, StateDerivative derivative, double scale)
+	{
+		State s{
+			.cart_position = state.cart_position + derivative.cart_position_rate * scale,
+			.cart_velocity = state.cart_velocity + derivative.cart_velocity_rate * scale,
+			.angle = state.angle + derivative.angle_rate * scale,
+			.angular_velocity = state.angular_velocity + derivative.angular_velocity_rate * scale,
+		};
+		return s;
+	}
 
-State rk4(double force, State state)
-{
-	StateDerivative k1 = dynamics(force, state);
+public:
+	Rk4(double timestep)
+	{
+		dt = timestep;
+	}
 
-	State state2 = add_scaled_state(state, k1, dt / 2);
-	StateDerivative k2 = dynamics(force, state2);
+	State solve(double force, State current_state) override
+	{
+		StateDerivative k1 = dynamics(force, current_state);
 
-	State state3 = add_scaled_state(state, k2, dt / 2);
-	StateDerivative k3 = dynamics(force, state3);
+		State state2 = add_scaled_state(current_state, k1, dt / 2);
+		StateDerivative k2 = dynamics(force, state2);
 
-	State state4 = add_scaled_state(state, k3, dt);
-	StateDerivative k4 = dynamics(force, state4);
+		State state3 = add_scaled_state(current_state, k2, dt / 2);
+		StateDerivative k3 = dynamics(force, state3);
 
-	int total_amount_of_weights = 6;
+		State state4 = add_scaled_state(current_state, k3, dt);
+		StateDerivative k4 = dynamics(force, state4);
 
-	double new_cart_position = (state.cart_position + dt / total_amount_of_weights * (k1.cart_position_rate + 2 * k2.cart_position_rate + 2 * k3.cart_position_rate + k4.cart_position_rate));
-	double new_cart_velocity = state.cart_velocity + dt / total_amount_of_weights * (k1.cart_velocity_rate + 2 * k2.cart_velocity_rate + 2 * k3.cart_velocity_rate + k4.cart_velocity_rate);
-	double new_angle = state.angle + dt / total_amount_of_weights * (k1.angle_rate + 2 * k2.angle_rate + 2 * k3.angle_rate + k4.angle_rate);
-	double new_angular_velocity = state.angular_velocity + dt / total_amount_of_weights * (k1.angular_velocity_rate + 2 * k2.angular_velocity_rate + 2 * k3.angular_velocity_rate + k4.angular_velocity_rate);
-	return State{
-		.cart_position = new_cart_position,
-		.cart_velocity = new_cart_velocity,
-		.angle = new_angle,
-		.angular_velocity = new_angular_velocity};
-}
+		int total_amount_of_weights = 6;
+
+		double new_cart_position = (current_state.cart_position + dt / total_amount_of_weights * (k1.cart_position_rate + 2 * k2.cart_position_rate + 2 * k3.cart_position_rate + k4.cart_position_rate));
+		double new_cart_velocity = current_state.cart_velocity + dt / total_amount_of_weights * (k1.cart_velocity_rate + 2 * k2.cart_velocity_rate + 2 * k3.cart_velocity_rate + k4.cart_velocity_rate);
+		double new_angle = current_state.angle + dt / total_amount_of_weights * (k1.angle_rate + 2 * k2.angle_rate + 2 * k3.angle_rate + k4.angle_rate);
+		double new_angular_velocity = current_state.angular_velocity + dt / total_amount_of_weights * (k1.angular_velocity_rate + 2 * k2.angular_velocity_rate + 2 * k3.angular_velocity_rate + k4.angular_velocity_rate);
+		return State{
+			.cart_position = new_cart_position,
+			.cart_velocity = new_cart_velocity,
+			.angle = new_angle,
+			.angular_velocity = new_angular_velocity};
+	}
+};
 
 double PD_Controller(State input)
 {
-
 	double error = setpoint - input.angle;
 
+	// P
 	double proportional = -Kp * error;
+
+	// D
 	double derivative = -Kd * (error - previous_error) / dt;
+
+	// basicly P for position and velocity so the cart will try and recenter itself
 	double cart_position = -Kx * input.cart_position;
 	double cart_velocity = -Kv * input.cart_velocity;
 
@@ -142,12 +174,14 @@ int main(int argc, char *argv[])
 		.angular_velocity = 0,
 	};
 
+	Rk4 solver(dt);
+
 	double force = 0;
 	double time = 0;
 
 	for (int i = 0; i <= sim_steps; i++)
 	{
-		state = rk4(force, state);
+		state = solver.solve(force, state);
 		force = PD_Controller(state);
 		time += dt;
 		string csv_string = to_string(time) + "," + to_string(state.cart_position) + "," + to_string(state.angle) + "\n";
