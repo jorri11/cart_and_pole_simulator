@@ -1,8 +1,9 @@
 import math
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 import matplotlib.pyplot as plt
 import json
 import subprocess
+import csv
 
 times = []
 cart_positions = []
@@ -21,7 +22,7 @@ class StateDerivative:
 
 @dataclass
 class State:
-	angle: float = 0.43633
+	angle: float = 2.03633
 	angular_velocity: float = 0.0
 	cart_position: float = 0
 	cart_velocity: float = 0
@@ -124,6 +125,24 @@ process = subprocess.Popen(
     text=True,
 )
 
+def writeToFile(state: dataclass):
+	filename="data.csv"
+	try:
+		with open(filename, "r") as f:
+			has_header = True
+	except FileNotFoundError:
+		has_header = False
+	
+	with open(filename, "a", newline="", encoding="utf-8") as f:
+		fieldnames = [field.name for field in fields(state)]
+		writer = csv.DictWriter(f,fieldnames=fieldnames)
+
+		if not has_header:
+			writer.writeheader()
+		
+		writer.writerow(asdict(state))
+
+
 force = 0
 
 for x in range(5000):
@@ -139,9 +158,8 @@ for x in range(5000):
 	response = process.stdout.readline()
 	output = json.loads(response)
 	force = output["force"]
+	writeToFile(state)
 	print(force)
-
-#process.wait()
 
 
 plt.figure()
