@@ -21,30 +21,23 @@ struct State
 	double angular_velocity;
 };
 
-string filename{"data.csv"};
+struct Params
+{
+	double pole_length;
+	double pole_mass;
+	double cart_mass;
+	double gravity;
+};
 
-double pole_length = 1;
-double pole_mass = 1;
-double cart_mass = 10;
-double gravity = 9.81;
-
-int setpoint{0};
-double Kp = 150.0;
-double Kd = 40.00;
-double previous_error{0};
-double dt = 0.01;
-double Kx = 0.1;
-double Kv = 1.0;
-
-StateDerivative dynamics(double force, State state)
+StateDerivative dynamics(double force, State state, Params params)
 {
 	double sin_angle = sin(state.angle);
 	double cos_angle = cos(state.angle);
 
-	double effective_inertia = cart_mass + pole_mass * pow(sin_angle, 2);
+	double effective_inertia = params.cart_mass + params.pole_mass * pow(sin_angle, 2);
 
-	double cart_acceleration = (force + pole_mass * sin_angle * (pole_length * pow(state.angular_velocity, 2) + gravity * cos_angle)) / effective_inertia;
-	double angle_acceleration = (-force * cos_angle - pole_mass * pole_length * pow(state.angular_velocity, 2) * cos_angle * sin_angle + (cart_mass + pole_mass) * gravity * sin_angle) / (pole_length * effective_inertia);
+	double cart_acceleration = (force + params.pole_mass * sin_angle * (params.pole_length * pow(state.angular_velocity, 2) + params.gravity * cos_angle)) / effective_inertia;
+	double angle_acceleration = (-force * cos_angle - params.pole_mass * params.pole_length * pow(state.angular_velocity, 2) * cos_angle * sin_angle + (params.cart_mass + params.pole_mass) * params.gravity * sin_angle) / (params.pole_length * effective_inertia);
 
 	return StateDerivative{
 		.cart_position_rate = state.cart_velocity,
@@ -55,24 +48,27 @@ StateDerivative dynamics(double force, State state)
 
 class DifferentialEquationSolver
 {
+protected:
 	double dt;
+	Params param;
+
+public:
 	virtual State solve(double force, State current_state) = 0;
 };
 
 class Euler : public DifferentialEquationSolver
 {
-private:
-	double dt;
 
 public:
-	Euler(double timestep)
+	Euler(double timestep, Params _param)
 	{
 		dt = timestep;
+		param = _param;
 	};
 
 	State solve(double force, State current_state) override
 	{
-		StateDerivative derivatives = dynamics(force, current_state);
+		StateDerivative derivatives = dynamics(force, current_state, param);
 		return State{
 			.cart_position = derivatives.cart_position_rate * dt,
 			.cart_velocity = derivatives.cart_velocity_rate * dt,
@@ -84,7 +80,6 @@ public:
 class Rk4 : public DifferentialEquationSolver
 {
 private:
-	double dt;
 	State add_scaled_state(State state, StateDerivative derivative, double scale)
 	{
 		State s{
@@ -97,23 +92,24 @@ private:
 	}
 
 public:
-	Rk4(double timestep)
+	Rk4(double timestep, Params _param)
 	{
 		dt = timestep;
+		param = _param;
 	}
 
 	State solve(double force, State current_state) override
 	{
-		StateDerivative k1 = dynamics(force, current_state);
+		StateDerivative k1 = dynamics(force, current_state, param);
 
 		State state2 = add_scaled_state(current_state, k1, dt / 2);
-		StateDerivative k2 = dynamics(force, state2);
+		StateDerivative k2 = dynamics(force, state2, param);
 
 		State state3 = add_scaled_state(current_state, k2, dt / 2);
-		StateDerivative k3 = dynamics(force, state3);
+		StateDerivative k3 = dynamics(force, state3, param);
 
 		State state4 = add_scaled_state(current_state, k3, dt);
-		StateDerivative k4 = dynamics(force, state4);
+		StateDerivative k4 = dynamics(force, state4, param);
 
 		int total_amount_of_weights = 6;
 
@@ -129,28 +125,64 @@ public:
 	}
 };
 
-double PD_Controller(State input)
+class Control_strategy
 {
-	double error = setpoint - input.angle;
+public:
+	int setpoint{0};
+	virtual double calculate_control_output(State input) = 0;
+};
 
-	// P
-	double proportional = -Kp * error;
+class Pd_controller : public Control_strategy
+{
+private:
+	double Kx = 0.1;
+	double Kv = 1.0;
+	double Kp = 150.0;
+	double Kd = 40.00;
 
-	// D
-	double derivative = -Kd * (error - previous_error) / dt;
+public:
+	double error;
+	double previous_error;
+	double dt;
+	Pd_controller(double _dt)
+	{
+		dt = _dt;
+	}
+	Pd_controller(int _setpoint)
+	{
+		setpoint = _setpoint;
+	}
+	Pd_controller(int _setpoint, double kp, double kd, double kx, double kv, double _dt)
+	{
+		setpoint = _setpoint;
+		Kp = kp;
+		Kd = kd;
+		Kx = kx;
+		Kv = kv;
+		dt = _dt;
+	}
 
-	// basicly P for position and velocity so the cart will try and recenter itself
-	double cart_position = -Kx * input.cart_position;
-	double cart_velocity = -Kv * input.cart_velocity;
+	double calculate_control_output(State input) override
+	{
+		error = setpoint - input.angle;
 
-	double force = proportional + derivative - cart_position - cart_velocity;
+		// P
+		double proportional = -Kp * error;
+		// D
+		double derivative = -Kd * (error - previous_error) / dt;
+		// basicly P for position and velocity so the cart will try and recenter itself
+		double cart_position = -Kx * input.cart_position;
+		double cart_velocity = -Kv * input.cart_velocity;
 
-	previous_error = error;
-	return force;
-}
+		double force = proportional + derivative - cart_position - cart_velocity;
+		previous_error = error;
+		return force;
+	}
+};
 
 int main(int argc, char *argv[])
 {
+	string filename{"data.csv"};
 	int run_seconds = 60;
 	if (argc == 1)
 	{
@@ -161,6 +193,16 @@ int main(int argc, char *argv[])
 		run_seconds = stoi(argv[1]);
 		cout << "Running sim for " + to_string(run_seconds) + " seconds" << endl;
 	}
+
+	Params p{
+		.pole_length = 1,
+		.pole_mass = 1,
+		.cart_mass = 10,
+		.gravity = 9.81,
+	};
+
+	double dt{0.01};
+
 	int sim_steps = run_seconds / dt;
 
 	ofstream ofs;
@@ -174,7 +216,8 @@ int main(int argc, char *argv[])
 		.angular_velocity = 0,
 	};
 
-	Rk4 solver(dt);
+	Rk4 solver(dt, p);
+	Pd_controller controller(dt);
 
 	double force = 0;
 	double time = 0;
@@ -182,8 +225,9 @@ int main(int argc, char *argv[])
 	for (int i = 0; i <= sim_steps; i++)
 	{
 		state = solver.solve(force, state);
-		force = PD_Controller(state);
+		force = controller.calculate_control_output(state);
 		time += dt;
+
 		string csv_string = to_string(time) + "," + to_string(state.cart_position) + "," + to_string(state.angle) + "\n";
 		ofs << csv_string;
 	}
