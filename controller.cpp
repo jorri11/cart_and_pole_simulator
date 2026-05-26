@@ -29,7 +29,7 @@ struct Params
 	double gravity;
 };
 
-StateDerivative dynamics(double force, State state, Params params)
+StateDerivative dynamics(double force, const State &state, const Params &params)
 {
 	double sin_angle = sin(state.angle);
 	double cos_angle = cos(state.angle);
@@ -53,34 +53,32 @@ protected:
 	Params param;
 
 public:
-	virtual State solve(double force, State current_state) = 0;
+	DifferentialEquationSolver(double timestep, const Params &p) : dt(timestep), param(p) {}
+	virtual ~DifferentialEquationSolver() = default;
+	virtual State solve(double force, const State &current_state) = 0;
 };
 
 class Euler : public DifferentialEquationSolver
 {
 
 public:
-	Euler(double timestep, Params _param)
-	{
-		dt = timestep;
-		param = _param;
-	};
+	Euler(double timestep, const Params &_param) : DifferentialEquationSolver(timestep, _param) {}
 
-	State solve(double force, State current_state) override
+	State solve(double force, const State &current_state) override
 	{
 		StateDerivative derivatives = dynamics(force, current_state, param);
 		return State{
-			.cart_position = derivatives.cart_position_rate * dt,
-			.cart_velocity = derivatives.cart_velocity_rate * dt,
-			.angle = derivatives.angle_rate * dt,
-			.angular_velocity = derivatives.angular_velocity_rate * dt,
+			.cart_position = current_state.cart_position + derivatives.cart_position_rate * dt,
+			.cart_velocity = current_state.cart_velocity + derivatives.cart_velocity_rate * dt,
+			.angle = current_state.angle + derivatives.angle_rate * dt,
+			.angular_velocity = current_state.angular_velocity + derivatives.angular_velocity_rate * dt,
 		};
 	}
 };
 class Rk4 : public DifferentialEquationSolver
 {
 private:
-	State add_scaled_state(State state, StateDerivative derivative, double scale)
+	State add_scaled_state(const State &state, const StateDerivative &derivative, double scale)
 	{
 		State s{
 			.cart_position = state.cart_position + derivative.cart_position_rate * scale,
@@ -92,13 +90,9 @@ private:
 	}
 
 public:
-	Rk4(double timestep, Params _param)
-	{
-		dt = timestep;
-		param = _param;
-	}
+	Rk4(double timestep, Params _param) : DifferentialEquationSolver(timestep, _param) {}
 
-	State solve(double force, State current_state) override
+	State solve(double force, const State &current_state) override
 	{
 		StateDerivative k1 = dynamics(force, current_state, param);
 
@@ -129,7 +123,8 @@ class Control_strategy
 {
 public:
 	int setpoint{0};
-	virtual double calculate_control_output(State input) = 0;
+	virtual ~Control_strategy() = default;
+	virtual double calculate_control_output(const State &input) = 0;
 };
 
 class Pd_controller : public Control_strategy
@@ -142,7 +137,7 @@ private:
 
 public:
 	double error;
-	double previous_error;
+	double previous_error = 0.0;
 	double dt;
 	Pd_controller(double _dt)
 	{
@@ -162,7 +157,7 @@ public:
 		dt = _dt;
 	}
 
-	double calculate_control_output(State input) override
+	double calculate_control_output(const State &input) override
 	{
 		error = setpoint - input.angle;
 
@@ -207,6 +202,7 @@ int main(int argc, char *argv[])
 
 	ofstream ofs;
 	ofs.open(filename, ofstream::app);
+	// Should check if ofs opened succesfully, dont have time right now
 	ofs << "time,cart_pos,pole_angle\n";
 
 	State state{
@@ -217,6 +213,7 @@ int main(int argc, char *argv[])
 	};
 
 	Rk4 solver(dt, p);
+	// Euler solver(dt, p); // uncomment this and comment out the line over to change between rk4 and euler solver
 	Pd_controller controller(dt);
 
 	double force = 0;
